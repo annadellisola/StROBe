@@ -484,25 +484,54 @@ class Household(object):
         occ_m = self.occ_m[0] # use merged occupancy -> simulate once
         cluster= [self.clustersList[0]] # use only clusterDict from 1st occupant (still a list since in [])
         nmin = nday * 24 * 60 # number of minutes in total number of days
-        flow = np.zeros(nmin+1)
+        # Keep per-tap flows and aggregate by room (kitchen/bathroom)
+        flows = dict()
         result_n = dict()
+        total_flow = np.zeros(nmin+1)
         for tap in self.taps:
             # create the tapping object with data from Appliances.py
             eq = Equipment(**set_appliances[tap])
-            # simulate the DHW demand
+            # simulate the DHW demand for this tap
             r_tap, n_tap = eq.simulate(nday, dow, cluster, occ_m)
-            result_n.update({tap:n_tap})
-            flow += r_tap['mDHW']
-    
-        result = {'mDHW':flow}
-    
+            result_n.update({tap: n_tap})
+            flows.update({tap: r_tap['mDHW']})
+            total_flow += r_tap['mDHW']
+
+        # Map taps to logical rooms. By default: short/medium -> kitchen, bath/shower -> bathroom.
+        # You can change these lists if you want a different mapping.
+        kitchen_taps = ['shortFlow'] #short taps (like dish-washing, cooking, hand-washing)
+        bathroom_taps = ['bathFlow', 'showerFlow', 'mediumFlow'] # bath, showers, medium taps (for frequent but short bathroom uses)
+
+        kitchen_flow = np.zeros_like(total_flow)
+        bathroom_flow = np.zeros_like(total_flow)
+        for t in kitchen_taps:
+            if t in flows:
+                kitchen_flow += flows[t]
+        for t in bathroom_taps:
+            if t in flows:
+                bathroom_flow += flows[t]
+
+        result = {
+            'mDHW': total_flow,
+            'per_tap': flows,
+            'kitchen': kitchen_flow,
+            'bathroom': bathroom_flow
+        }
+
         self.r_flows = result
         self.n_flows = result_n
-        self.variables.update({'mDHW': 'Domestic hot water demand at the tap points in l/min.'})
+        self.variables.update({'mDHW': 'Domestic hot water demand at the tap points in l/min.',
+                               'mDHW_kitchen': 'Domestic hot water demand for kitchen taps in l/min.',
+                               'mDHW_bathroom': 'Domestic hot water demand for bathroom taps in l/min.'})
 
         load = np.sum(result['mDHW'])
         loadpppd = int(load/self.nday/len(self.clustersList))
         print(' - Draw-off is %s l/p.day' % str(loadpppd))
+        # Print per-room draw-off (useful feedback)
+        load_k = int(np.sum(result['kitchen'])/self.nday/len(self.clustersList))
+        load_b = int(np.sum(result['bathroom'])/self.nday/len(self.clustersList))
+        print('   - Kitchen draw-off ~%s l/p.day' % str(load_k))
+        print('   - Bathroom draw-off ~%s l/p/day' % str(load_b))
  
         return None
 
@@ -586,6 +615,11 @@ class Household(object):
         self.QRad = self.r_receptacles['QRad'] + self.r_lighting['QRad']
         self.QCon = self.r_receptacles['QCon'] + self.r_lighting['QCon']
         self.mDHW = self.r_flows['mDHW']
+        # also expose per-room flows if available
+        self.mDHW_kitchen = self.r_flows.get('kitchen', np.zeros_like(self.mDHW))
+        self.mDHW_bathroom = self.r_flows.get('bathroom', np.zeros_like(self.mDHW))
+        # keep per-tap series if available (useful to inspect individual taps)
+        self.mDHW_per_tap = self.r_flows.get('per_tap', {})
         self.dow = self.dow[1] # only first day of year is interensting to keep (skip initiation day(index=0))
         
         #######################################################################        
@@ -607,6 +641,13 @@ class Household(object):
         self.QRad = self.QRad[start:stop+1]
         self.QCon = self.QCon[start:stop+1]
         self.mDHW = self.mDHW[start:stop+1]
+        # slice per-room DHW arrays the same way
+        self.mDHW_kitchen = self.mDHW_kitchen[start:stop+1]
+        self.mDHW_bathroom = self.mDHW_bathroom[start:stop+1]
+        # slice per-tap arrays if present
+        if isinstance(self.mDHW_per_tap, dict) and len(self.mDHW_per_tap) > 0:
+            for tap, arr in list(self.mDHW_per_tap.items()):
+                self.mDHW_per_tap[tap] = arr[start:stop+1]
     
         #######################################################################
         # then we delete the old data structure to save space

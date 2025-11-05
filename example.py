@@ -10,8 +10,8 @@ import Corpus.residential as res
 os.chdir(os.path.join(strobeDir, 'Corpus')) # make Corpus the current directory
 
 # Create and simulate a single household, with given type of members, and given year
-family = res.Household("Example household", members=['FTE', 'Unemployed'])
-family.simulate(year=2013, ndays=365)
+family = res.Household("Example household", members=['FTE', 'PTE', 'School'])
+family.simulate(year=2025, ndays=365)
 
 family.__dict__ # list all elements of family for inspection
 
